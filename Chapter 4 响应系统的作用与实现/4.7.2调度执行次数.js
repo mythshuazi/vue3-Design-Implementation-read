@@ -6,7 +6,6 @@
 
 // 存储副作用函数的桶
 const bucket = new WeakMap()
-let temp1, temp2
 
 // 用一个全局变量存储被注册的副作用函数
 let activeEffect;
@@ -116,11 +115,33 @@ function trigger (target, key) {
     })
     effectsToRun.forEach(effectFn => {
         // 如果一个副作用函数存在调度器，则调用该调度器，并将副作用函数作为参数传递
-        if (effectFn.options.scheduler) { // 新增
+        if (effectFn?.options?.scheduler) { // 新增
             effectFn.options.scheduler(effectFn) // 新增
         } else {
             effectFn()
         }
+    })
+}
+
+// 定义一个任务队列
+const jobQueue = new Set()
+// 使用 Promise.resolve() 创建一个 promise 实例，我们用它将一个任务添加到微任务队列
+const p = Promise.resolve()
+
+// 一个标志代表是否正在刷新队列
+let isFlushing = false
+function flushJob () {
+    // 如果队列正在刷新，则什么都不做
+    if (isFlushing) return
+    // 设置为 true，代表正在刷新
+    isFlushing = true
+
+    // 在微任务队列中刷新 jobQueue 队列
+    p.then(() => {
+        jobQueue.forEach(job => job())
+    }).finally(() => {
+        // 结束后重置 isFlushing
+        isFlushing = false
     })
 }
 
@@ -132,19 +153,61 @@ effect(
     () => {
         console.log(obj.foo)
     },
-    // options
     {
-        // 调度器 scheduler 是一个函数
-        scheduler(fn) {
-            setTimeout(fn)
+        scheduler (fn) {
+            jobQueue.add(fn)
+            flushJob()
         }
     }
 )
 
 obj.foo++
+obj.foo++
 
 console.log('结束了')
 
 /**
+ * 执行顺序分析：
+ * effect(..., ...) 正常收集依赖
  * 
+ * 执行 obj.foo++
+ * --触发 get -> track
+ * --触发 set -> trigger
+ * ----执行 scheduler
+ * ------向 jobQueue 中添加 fn 待执行
+ * ------执行 flushJob
+ * --------isFlushing 为 false，继续执行
+ * --------遇到 p.then 为微任务，微任务入栈，待执行
+ * 
+ * 执行第2个 obj.foo++
+ * --触发 get -> track
+ * --触发 set -> trigger
+ * ----执行 scheduler
+ * ------向 jobQueue 中添加 fn 待执行
+ * ------执行 flushJob
+ * --------isFlushing 为 true，return
+ * 提取微任务栈，执行微任务
+ * p.then(() => jobQueue.forEach(job => job()))
+ *  .finally(() => { isFlushing = false }) 重置 isFlushing
+ * 执行 console.log('结束了')
+ * 
+ * 一次 EventLoop 结束
+ * 
+ * 我认为的核心思想是：
+ * 一个事件循环中，对同一属性的赋值操作可以是多次，但与该属性相关的副作用函数只会运行一次，
+ * 这个实现的方式就是通过事件循环+微任务。
+ * isFlushing 控制着副作用函数只执行一次的关键，它是在微任务执行之后才会被重置为 false，
+ * 但在 jobQueue.forEach(job => job()) 执行前，可以向 jobQueue 里 add 多个副作用函数，
+ * 由于它是 set 结构，因此同一个副作用函数即使 add 多次也会被去重
+ * 因此微任务
+ * p.then(() => {
+ *   jobQueue.forEach(job => job())
+ * })
+ * 只会在同步代码结束后执行，即第二次 obj.foo++ 完毕后执行
+ * 
+ * 
+ *（
+ *  个人认为的事件循环：
+ *  同步代码执行->微任务执行->宏任务执行->事件循环结束，等待下次代码执行（用户操作事件或宏任务队列执行）
+ * )
  */

@@ -126,25 +126,29 @@ effect(() => {
 /**
  * 梳理一下注册流程以及当前形成死循环的流程：
  * effect(function fn ()=>{...}) 注册副作用函数
- *   重新包装 fn 为 effectFn
- *   为副作用函数添加 deps 属性，值为数组，存储包含此副作用函数的依赖集合的引用
- *   ★执行副作用函数 effectFn 
- *     effectFn 函数体中首先执行 cleanup 清除所有依赖集合中的当前副作用函数
- *     将当前执行的 effectFn 赋值给 activeEffect
- *     将当前执行的 effectFn 压入栈 effectStack
- *     执行原始副作用函数 fn
- *       fn 函数体中执行读取操作 obj.foo + 1 ，随即进入代理中的 get 操作
- *         get 函数体执行
- *           track 对当前读取的 key 收集副作用函数集合 deps.add(activeEffect)
- *           将当前 deps 依赖集合 push 进当前执行的副作用函数的 activeEffect.deps 数组中
- *           返回当前属性值 return target[key]，读取操作结束
- * -----------------------------正常情况下注册流程结束，执行到 ▲ 步骤--------------------------------------------
- *       fn 执行赋值操作 obj.foo = 值，进入代理的 set 操作
- *         set 函数体执行
- *           赋值操作
- *           trigger 开始逐个执行副作用函数操作
- *             执行 effectFn 此时进入上面标 ★ 号的步骤，这样就形成了一个死循环，引起栈溢出
- * ----------------------------以下步骤永远无法执行，因此当前 activeEffect === effectFn----------------
- *       ▲ 执行出栈操作 effectStack.pop()
- *       清除或还原当前执行的副作用函数 activeEffect = effectStack[effectStack.length - 1]
+ * --重新包装 fn 为 effectFn
+ * --为副作用函数添加 deps 属性，值为数组，存储包含此副作用函数的依赖集合的引用
+ * --★执行副作用函数 effectFn 
+ * ----effectFn 函数体中首先执行 cleanup 清除所有依赖集合中的当前副作用函数
+ * ----将当前执行的 effectFn 赋值给 activeEffect
+ * ----将当前执行的 effectFn 压入栈 effectStack
+ * ----执行原始副作用函数 fn
+ * ------fn 函数体中执行读取操作 obj.foo + 1 ，随即进入代理中的 get 操作
+ * --------get 函数体执行
+ * ----------track 对当前读取的 key 收集副作用函数集合 deps.add(activeEffect)
+ * ----------将当前 deps 依赖集合 push 进当前执行的副作用函数的 activeEffect.deps 数组中
+ * ----------返回当前属性值 return target[key]，读取操作结束
+ * 
+ * ************************正常情况下注册流程结束，执行到 ▲ 步骤*************************************
+ * 
+ * ------fn 执行赋值操作 obj.foo = 值，进入代理的 set 操作
+ * --------set 函数体执行
+ * ----------赋值操作
+ * ----------trigger 开始逐个执行副作用函数操作
+ * ------------执行 effectFn 此时进入上面标 ★ 号的步骤，这样就形成了一个死循环，引起栈溢出
+ * 
+ * ***********************以下步骤永远无法执行，因此当前 activeEffect === effectFn*******************
+ * 
+ * ------▲ 执行出栈操作 effectStack.pop()
+ * ------清除或还原当前执行的副作用函数 activeEffect = effectStack[effectStack.length - 1]
  */
